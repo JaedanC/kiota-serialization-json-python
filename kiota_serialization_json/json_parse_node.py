@@ -7,7 +7,9 @@ from enum import Enum
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, Union
 from uuid import UUID
 
-from dateutil import parser
+import pendulum
+import re
+
 from kiota_abstractions.serialization import Parsable, ParsableFactory, ParseNode
 
 T = TypeVar("T")
@@ -67,9 +69,9 @@ class JsonParseNode(ParseNode, Generic[T, U]):
     def get_float_value(self) -> Optional[float]:
         """Gets the float value of the json node
         Returns:
-            float: The integer value of the node
+            float: The number value of the node
         """
-        return self._json_node if isinstance(self._json_node, float) else None
+        return float(self._json_node) if isinstance(self._json_node, (float, int)) else None
 
     def get_uuid_value(self) -> Optional[UUID]:
         """Gets the UUID value of the json node
@@ -89,8 +91,14 @@ class JsonParseNode(ParseNode, Generic[T, U]):
         """
         if isinstance(self._json_node, datetime):
             return self._json_node
+
         if isinstance(self._json_node, str):
-            return parser.parse(self._json_node)
+            if len(self._json_node) < 10:
+                return None
+
+            datetime_obj = pendulum.parse(self._json_node, exact=True)
+            if isinstance(datetime_obj, pendulum.DateTime):
+                return datetime_obj
         return None
 
     def get_timedelta_value(self) -> Optional[timedelta]:
@@ -101,10 +109,9 @@ class JsonParseNode(ParseNode, Generic[T, U]):
         if isinstance(self._json_node, timedelta):
             return self._json_node
         if isinstance(self._json_node, str):
-            datetime_obj = parser.parse(self._json_node)
-            return timedelta(
-                hours=datetime_obj.hour, minutes=datetime_obj.minute, seconds=datetime_obj.second
-            )
+            datetime_obj = pendulum.parse(self._json_node, exact=True)
+            if isinstance(datetime_obj, pendulum.Duration):
+                return datetime_obj.as_timedelta()
         return None
 
     def get_date_value(self) -> Optional[date]:
@@ -115,8 +122,9 @@ class JsonParseNode(ParseNode, Generic[T, U]):
         if isinstance(self._json_node, date):
             return self._json_node
         if isinstance(self._json_node, str):
-            datetime_obj = parser.parse(self._json_node)
-            return datetime_obj.date()
+            datetime_obj = pendulum.parse(self._json_node, exact=True)
+            if isinstance(datetime_obj, pendulum.Date):
+                return datetime_obj
         return None
 
     def get_time_value(self) -> Optional[time]:
@@ -127,8 +135,9 @@ class JsonParseNode(ParseNode, Generic[T, U]):
         if isinstance(self._json_node, time):
             return self._json_node
         if isinstance(self._json_node, str):
-            datetime_obj = parser.parse(self._json_node)
-            return datetime_obj.time()
+            datetime_obj = pendulum.parse(self._json_node, exact=True)
+            if isinstance(datetime_obj, pendulum.Time):
+                return datetime_obj
         return None
 
     def get_collection_of_primitive_values(self, primitive_type: Any) -> Optional[List[T]]:
@@ -195,7 +204,7 @@ class JsonParseNode(ParseNode, Generic[T, U]):
         try:
             return enum_class[camel_case_key]  # type: ignore
         except KeyError:
-            raise Exception(f'Invalid key: {camel_case_key} for enum {enum_class}.')
+            return None
 
     def get_object_value(self, factory: ParsableFactory) -> U:
         """Gets the model object value of the node
@@ -293,21 +302,17 @@ class JsonParseNode(ParseNode, Generic[T, U]):
             return dict(map(lambda x: (x[0], self.try_get_anything(x[1])), value.items()))
         if isinstance(value, str):
             try:
-                datetime_obj = parser.parse(value)
-                return timedelta(
-                    hours=datetime_obj.hour,
-                    minutes=datetime_obj.minute,
-                    seconds=datetime_obj.second
-                )
-            except ValueError:
-                pass
-            try:
-                return parser.parse(value)
+                if value.isdigit():
+                    return value
+                datetime_obj = pendulum.parse(value)
+                if isinstance(datetime_obj, pendulum.Duration):
+                    return datetime_obj.as_timedelta()
+                return datetime_obj
             except ValueError:
                 pass
             try:
                 return UUID(value)
-            except ValueError:
+            except:
                 pass
             return value
         raise ValueError(f"Unexpected additional value type {type(value)} during deserialization.")
